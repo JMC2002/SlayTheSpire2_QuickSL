@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.7.0] - 2026-7-31
+### Fixed
+- Added compatibility with game version 0.110.
+
 ## [1.6.1] - 2026-7-11
 ### Fixed
 - The multiplayer SL feature should be enabled by default.
