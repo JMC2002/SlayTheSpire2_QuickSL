@@ -1,40 +1,58 @@
 using JmcModLib.Utils;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+using System.Reflection;
 
 namespace QuickSL.Core;
 
-internal sealed class PassiveLoadRunLobbyListener : ILoadRunLobbyListener
+internal class PassiveLoadRunLobbyListener : DispatchProxy
 {
-    public static PassiveLoadRunLobbyListener Instance { get; } = new();
+    private const string ListenerTypeName =
+        "MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.ILoadRunLobbyListener";
 
-    public void PlayerConnected(ulong playerId)
+    internal static object CreateListener()
     {
-        ModLogger.Debug($"多人快速 SL：LoadRunLobby 玩家已连接 {playerId}。");
+        // 0.107.1–0.109.1 的 PlayerConnected 参数是 ulong；0.110 改为 LoadRunLobbyPlayer。
+        // 单个静态类型无法同时实现两种接口形态，因此按当前游戏 DLL 动态生成接口代理。
+        Type listenerType = typeof(LoadRunLobby).Assembly.GetType(ListenerTypeName, throwOnError: true)!;
+        return Create(listenerType, typeof(PassiveLoadRunLobbyListener));
     }
 
-    public void RemotePlayerDisconnected(ulong playerId)
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
     {
-        ModLogger.Debug($"多人快速 SL：LoadRunLobby 玩家已断开 {playerId}。");
-    }
+        ArgumentNullException.ThrowIfNull(targetMethod);
+        args ??= [];
 
-    public Task<bool> ShouldAllowRunToBegin()
-    {
-        return Task.FromResult(true);
-    }
+        switch (targetMethod.Name)
+        {
+            case "PlayerConnected":
+                ModLogger.Debug(
+                    $"多人快速 SL：LoadRunLobby 玩家已连接 {QuickSlLobbyCompat.GetPlayerId(args[0])}。");
+                return null;
 
-    public void BeginRun()
-    {
-        ModLogger.Debug("多人快速 SL：LoadRunLobby 收到开始载入通知。");
-    }
+            case "RemotePlayerDisconnected":
+                ModLogger.Debug($"多人快速 SL：LoadRunLobby 玩家已断开 {(ulong)args[0]!}。");
+                return null;
 
-    public void PlayerReadyChanged(ulong playerId)
-    {
-        ModLogger.Debug($"多人快速 SL：LoadRunLobby 玩家准备状态变化 {playerId}。");
-    }
+            case "ShouldAllowRunToBegin":
+                return Task.FromResult(true);
 
-    public void LocalPlayerDisconnected(NetErrorInfo info)
-    {
-        ModLogger.Warn($"多人快速 SL：LoadRunLobby 本地连接断开，原因={info.GetReason()}。");
+            case "BeginRun":
+                ModLogger.Debug("多人快速 SL：LoadRunLobby 收到开始载入通知。");
+                return null;
+
+            case "PlayerReadyChanged":
+                ModLogger.Debug($"多人快速 SL：LoadRunLobby 玩家准备状态变化 {(ulong)args[0]!}。");
+                return null;
+
+            case "LocalPlayerDisconnected":
+                var info = (NetErrorInfo)args[0]!;
+                ModLogger.Warn($"多人快速 SL：LoadRunLobby 本地连接断开，原因={info.GetReason()}。");
+                return null;
+
+            default:
+                throw new MissingMethodException(
+                    $"QuickSL 尚未适配 {ListenerTypeName}.{targetMethod.Name} 回调。");
+        }
     }
 }

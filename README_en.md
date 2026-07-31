@@ -19,7 +19,7 @@
 
 Subscribe on Steam Workshop, or download a release and extract it into the game's `mods` directory.
 
-QuickSL requires [JmcModLib](https://github.com/JMC-Mods/SlayTheSpire2_JmcModLib/releases) `1.6.1` or newer.
+QuickSL requires [JmcModLib](https://github.com/JMC-Mods/SlayTheSpire2_JmcModLib/releases) `1.7.3` or newer.
 
 ```text
 Slay the Spire 2/

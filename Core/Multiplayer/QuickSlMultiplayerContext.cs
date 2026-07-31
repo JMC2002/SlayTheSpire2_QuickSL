@@ -1,3 +1,4 @@
+using JmcModLib.Compat;
 using JmcModLib.Reflection;
 using JmcModLib.Utils;
 using MegaCrit.Sts2.Core.Multiplayer;
@@ -126,7 +127,12 @@ internal sealed class QuickSlMultiplayerContext
                 ? [.. hostService.ConnectedPeers.Select(peer => peer.peerId)]
                 : null;
 
-            foreach (ulong playerId in runManager.RunLobby.ConnectedPlayerIds)
+            // 0.107.1–0.109.1 使用 ConnectedPlayerIds；0.110 改为 PlayerIds。
+            // 通过 JML 公共兼容接口读取，避免 QuickSL 再绑定任一版本专属属性。
+            IReadOnlyList<ulong> runLobbyPlayerIds =
+                MultiplayerCompat.GetRunLobbyPlayerIds(runManager.RunLobby);
+
+            foreach (ulong playerId in runLobbyPlayerIds)
             {
                 if (playerId == netService.NetId || hostConnectedPeerIds?.Contains(playerId) != false)
                 {
@@ -134,10 +140,10 @@ internal sealed class QuickSlMultiplayerContext
                 }
             }
 
-            if (hostConnectedPeerIds != null && connectedPlayerIds.Count < runManager.RunLobby.ConnectedPlayerIds.Count)
+            if (hostConnectedPeerIds != null && connectedPlayerIds.Count < runLobbyPlayerIds.Count)
             {
                 ModLogger.Info(
-                    $"多人快速 SL：本次只同步 {connectedPlayerIds.Count}/{runManager.RunLobby.ConnectedPlayerIds.Count} 个仍在线玩家。");
+                    $"多人快速 SL：本次只同步 {connectedPlayerIds.Count}/{runLobbyPlayerIds.Count} 个仍在线玩家。");
             }
         }
 

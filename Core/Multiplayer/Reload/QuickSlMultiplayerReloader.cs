@@ -1,3 +1,4 @@
+using JmcModLib.Compat;
 using JmcModLib.Reflection;
 using JmcModLib.Utils;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
@@ -13,9 +14,6 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
 {
     private static readonly MemberAccessor NetServiceAccessor =
         MemberAccessor.Get(typeof(RunManager), nameof(RunManager.NetService));
-
-    private static readonly MemberAccessor RunLobbyConnectedPlayerIdsAccessor =
-        MemberAccessor.Get(typeof(RunLobby), "_connectedPlayerIds");
 
     private readonly SemaphoreSlim reloadLock = new(1, 1);
 
@@ -55,6 +53,8 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
                 ? Context.GetConnectedRunPlayerIds(runManager, originalNetService)
                 : [.. connectedPlayerIdsOverride];
             connectedPlayerIds.Add(originalNetService.NetId);
+            IReadOnlyDictionary<ulong, object?> versionInfoByPlayerId =
+                QuickSlLobbyCompat.CaptureRunLobbyVersionInfo(runManager.RunLobby);
             setupBarrierState = Barrier.PrepareHostSetupBarrier(requestId, originalNetService, connectedPlayerIds);
 
             SerializableRun? runSave = runSaveOverride == null
@@ -91,15 +91,21 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
                 NetServiceAccessor.SetValue(runManager, originalNetService);
             }
 
-            loadLobby = new LoadRunLobby(originalNetService, PassiveLoadRunLobbyListener.Instance, runSave);
-            AddConnectedPlayersToLoadLobby(loadLobby, originalNetService, connectedPlayerIds);
-            game.RemoteCursorContainer.Initialize(loadLobby.InputSynchronizer, loadLobby.ConnectedPlayerIds);
+            loadLobby = QuickSlLobbyCompat.CreateLoadRunLobby(originalNetService, runSave);
+            QuickSlLobbyCompat.AddConnectedPlayersToLoadLobby(
+                loadLobby,
+                originalNetService,
+                connectedPlayerIds,
+                versionInfoByPlayerId);
+            game.RemoteCursorContainer.Initialize(
+                loadLobby.InputSynchronizer,
+                MultiplayerCompat.GetLoadRunLobbyPlayerIds(loadLobby));
             game.ReactionContainer.InitializeNetworking(loadLobby.NetService);
 
             await Barrier.WaitForCoordinatedLoadBeginAsync(requestId, originalNetService, connectedPlayerIds);
 
             await QuickSlRunManagerCompat.SetUpSavedMultiPlayerAsync(runManager, runState, loadLobby);
-            KeepOnlyConnectedPlayersInRunLobby(runManager, loadLobby.ConnectedPlayerIds);
+            QuickSlLobbyCompat.KeepOnlyConnectedRunLobbyPlayers(runManager, connectedPlayerIds);
             controller.EnsureHandlersRegistered();
 
             await Barrier.WaitForCoordinatedRunBeginAsync(requestId, originalNetService, connectedPlayerIds);
@@ -136,54 +142,6 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
             }
 
             reloadLock.Release();
-        }
-    }
-
-    private static void AddConnectedPlayersToLoadLobby(
-        LoadRunLobby loadLobby,
-        INetGameService netService,
-        IEnumerable<ulong> connectedPlayerIds)
-    {
-        if (netService.Type == NetGameType.Host)
-        {
-            loadLobby.AddLocalHostPlayer();
-        }
-
-        foreach (ulong playerId in connectedPlayerIds)
-        {
-            loadLobby.ConnectedPlayerIds.Add(playerId);
-        }
-    }
-
-    private static void KeepOnlyConnectedPlayersInRunLobby(RunManager runManager, IReadOnlySet<ulong> connectedPlayerIds)
-    {
-        if (runManager.RunLobby == null)
-        {
-            ModLogger.Warn("多人快速 SL：RunLobby 尚未初始化，无法修正已连接玩家列表。");
-            return;
-        }
-
-        if (RunLobbyConnectedPlayerIdsAccessor.GetValue(runManager.RunLobby) is not HashSet<ulong> runLobbyConnectedPlayerIds)
-        {
-            ModLogger.Warn("多人快速 SL：读取 RunLobby 已连接玩家列表失败。");
-            return;
-        }
-
-        ulong[] disconnectedPlayerIds =
-        [
-            .. runLobbyConnectedPlayerIds
-                .Where(playerId => !connectedPlayerIds.Contains(playerId))
-        ];
-
-        foreach (ulong playerId in disconnectedPlayerIds)
-        {
-            runLobbyConnectedPlayerIds.Remove(playerId);
-            runManager.InputSynchronizer.OnPlayerDisconnected(playerId);
-        }
-
-        if (disconnectedPlayerIds.Length > 0)
-        {
-            ModLogger.Info($"多人快速 SL：已将 {disconnectedPlayerIds.Length} 个未连接玩家从本次加载同步等待中移除。");
         }
     }
 
