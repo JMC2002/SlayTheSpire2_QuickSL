@@ -1,92 +1,50 @@
-using JmcModLib.Reflection;
 using JmcModLib.Utils;
-using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
-using MegaCrit.Sts2.Core.Multiplayer.Quality;
-using MegaCrit.Sts2.Core.Multiplayer.Serialization;
-using MegaCrit.Sts2.Core.Platform;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
 
 namespace QuickSL.Core;
 
-internal sealed class DisconnectSuppressingNetGameService(INetGameService inner) : INetGameService
+internal class DisconnectSuppressingNetGameService : DispatchProxy
 {
-    public ulong NetId => inner.NetId;
+    private INetGameService? inner;
 
-    public bool IsConnected => inner.IsConnected;
-
-    public bool IsGameLoading => inner.IsGameLoading;
-
-    public NetGameType Type => inner.Type;
-
-    public PlatformType Platform => inner.Platform;
-
-    public event Action<NetErrorInfo>? Disconnected
+    internal static INetGameService Create(INetGameService inner)
     {
-        add => inner.Disconnected += value;
-        remove => inner.Disconnected -= value;
+        ArgumentNullException.ThrowIfNull(inner);
+
+        object proxy = Create(typeof(INetGameService), typeof(DisconnectSuppressingNetGameService));
+        var instance = (DisconnectSuppressingNetGameService)proxy;
+        instance.inner = inner;
+        return (INetGameService)proxy;
     }
 
-    public void SendMessage<T>(T message, ulong playerId) where T : INetMessage
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
     {
-        inner.SendMessage(message, playerId);
-    }
+        ArgumentNullException.ThrowIfNull(targetMethod);
+        INetGameService target = inner
+            ?? throw new InvalidOperationException("断线抑制网络代理尚未初始化。");
 
-    public void SendMessage<T>(T message) where T : INetMessage
-    {
-        inner.SendMessage(message);
-    }
-
-    public void RegisterMessageHandler<T>(MessageHandlerDelegate<T> messageHandlerDelegate) where T : INetMessage
-    {
-        inner.RegisterMessageHandler(messageHandlerDelegate);
-    }
-
-    public void UnregisterMessageHandler<T>(MessageHandlerDelegate<T> messageHandlerDelegate) where T : INetMessage
-    {
-        inner.UnregisterMessageHandler(messageHandlerDelegate);
-    }
-
-    public void Update()
-    {
-        inner.Update();
-    }
-
-    public void Disconnect(NetError reason, bool now = false)
-    {
-        ModLogger.Debug($"多人快速 SL：跳过 CleanUp 中的 NetService.Disconnect({reason}, now={now})。");
-    }
-
-    public ConnectionStats? GetStatsForPeer(ulong peerId)
-    {
-        return inner.GetStatsForPeer(peerId);
-    }
-
-    public void SetGameLoading(bool isLoading)
-    {
-        inner.SetGameLoading(isLoading);
-    }
-
-    public void SetBufferMessages(bool bufferMessages)
-    {
-        // STS2 0.105 起 INetGameService 新增 SetBufferMessages(bool)，旧版接口没有该方法。
-        // 已知旧版直接跳过；未知版本仍尝试调用，交给 JML MethodAccessor 的缓存和异常路径兜底。
-        if (Sts2GameVersionCompat.IsVersionKnown && !Sts2GameVersionCompat.SupportsNetMessageBuffering)
+        if (targetMethod.Name == nameof(INetGameService.Disconnect))
         {
-            return;
+            object? reason = args is { Length: > 0 } ? args[0] : null;
+            object? now = args is { Length: > 1 } ? args[1] : false;
+            ModLogger.Debug(
+                $"多人快速 SL：跳过 CleanUp 中的 NetService.Disconnect({reason}, now={now})。");
+            return null;
         }
 
         try
         {
-            MethodAccessor.Get(typeof(INetGameService), "SetBufferMessages", [typeof(bool)])
-                .Invoke(inner, bufferMessages);
+            // 运行时代理会按当前游戏实际的 INetGameService 形态转发全部成员。
+            // 因此 0.107.1 不会静态引用尚不存在的 PeerVersionInfo，0.111 的 LocalVersion
+            // 也会自动转发给原服务。
+            return targetMethod.Invoke(target, args);
         }
-        catch (MissingMethodException)
+        catch (TargetInvocationException ex) when (ex.InnerException != null)
         {
+            ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            throw;
         }
-    }
-
-    public string? GetRawLobbyIdentifier()
-    {
-        return inner.GetRawLobbyIdentifier();
     }
 }

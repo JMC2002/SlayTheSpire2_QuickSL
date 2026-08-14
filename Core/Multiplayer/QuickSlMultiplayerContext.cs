@@ -124,11 +124,11 @@ internal sealed class QuickSlMultiplayerContext
         if (runManager.RunLobby != null)
         {
             HashSet<ulong>? hostConnectedPeerIds = netService is INetHostGameService hostService
-                ? [.. hostService.ConnectedPeers.Select(peer => peer.peerId)]
+                ? [.. MultiplayerCompat.GetConnectedHostPeerIds(hostService)]
                 : null;
 
-            // 0.107.1–0.109.1 使用 ConnectedPlayerIds；0.110 改为 PlayerIds。
-            // 通过 JML 公共兼容接口读取，避免 QuickSL 再绑定任一版本专属属性。
+            // 大厅 ID 与主机在线 Peer 都通过 JML 公共兼容接口读取，避免 QuickSL
+            // 绑定 0.107.1–0.110.1 的接口属性或 0.111 的具体实现属性。
             IReadOnlyList<ulong> runLobbyPlayerIds =
                 MultiplayerCompat.GetRunLobbyPlayerIds(runManager.RunLobby);
 

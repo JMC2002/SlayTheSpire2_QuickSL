@@ -53,8 +53,8 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
                 ? Context.GetConnectedRunPlayerIds(runManager, originalNetService)
                 : [.. connectedPlayerIdsOverride];
             connectedPlayerIds.Add(originalNetService.NetId);
-            IReadOnlyDictionary<ulong, object?> versionInfoByPlayerId =
-                QuickSlLobbyCompat.CaptureRunLobbyVersionInfo(runManager.RunLobby);
+            IReadOnlyDictionary<ulong, QuickSlLobbyPlayerState> playerStateById =
+                QuickSlLobbyCompat.CaptureRunLobbyPlayerStates(runManager.RunLobby);
             setupBarrierState = Barrier.PrepareHostSetupBarrier(requestId, originalNetService, connectedPlayerIds);
 
             SerializableRun? runSave = runSaveOverride == null
@@ -79,7 +79,8 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
             QuickSlSceneReloadGuard.PrepareCurrentHandForSceneSwap();
             DisposeNetworkPreservedRunSystems(runManager);
 
-            var protectedNetService = new DisconnectSuppressingNetGameService(originalNetService);
+            INetGameService protectedNetService =
+                DisconnectSuppressingNetGameService.Create(originalNetService);
             NetServiceAccessor.SetValue(runManager, protectedNetService);
             try
             {
@@ -96,7 +97,7 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
                 loadLobby,
                 originalNetService,
                 connectedPlayerIds,
-                versionInfoByPlayerId);
+                playerStateById);
             game.RemoteCursorContainer.Initialize(
                 loadLobby.InputSynchronizer,
                 MultiplayerCompat.GetLoadRunLobbyPlayerIds(loadLobby));

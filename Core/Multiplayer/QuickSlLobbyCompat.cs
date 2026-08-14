@@ -9,15 +9,21 @@ using System.Collections;
 
 namespace QuickSL.Core;
 
+internal readonly record struct QuickSlLobbyPlayerState(
+    object? VersionInfo,
+    bool? IsModded);
+
 internal static class QuickSlLobbyCompat
 {
     // 0.107.1–0.109.1 的 RunLobby 保存 HashSet<ulong> _connectedPlayerIds；
-    // 0.110 改为公开 List<RunLobbyPlayer> Players，并在玩家对象中附带版本信息。
+    // 0.110 改为公开 List<RunLobbyPlayer> Players，并在玩家对象中附带版本信息；
+    // 0.111 将版本信息收窄为 isModded。
     private static readonly Lazy<MemberAccessor?> RunLobbyPlayersAccessor = new(() =>
         FindReadableMember(typeof(RunLobby), "Players", "_connectedPlayerIds"));
 
     // 0.107.1–0.109.1 的 LoadRunLobby 公开 HashSet<ulong> ConnectedPlayerIds；
-    // 0.110 改为 List<LoadRunLobbyPlayer> Players，创建玩家时还必须提供 PeerVersionInfo。
+    // 0.110 改为 List<LoadRunLobbyPlayer> Players，创建玩家时必须提供 PeerVersionInfo；
+    // 0.111 改为提供 isModded。
     private static readonly Lazy<MemberAccessor?> LoadRunLobbyPlayersAccessor = new(() =>
         FindReadableMember(typeof(LoadRunLobby), "Players", "ConnectedPlayerIds"));
 
@@ -31,14 +37,17 @@ internal static class QuickSlLobbyCompat
                ?? throw new InvalidOperationException("无法创建兼容当前游戏版本的 LoadRunLobby。");
     }
 
-    internal static IReadOnlyDictionary<ulong, object?> CaptureRunLobbyVersionInfo(RunLobby? lobby)
+    internal static IReadOnlyDictionary<ulong, QuickSlLobbyPlayerState> CaptureRunLobbyPlayerStates(
+        RunLobby? lobby)
     {
-        var versionInfoByPlayerId = MultiplayerCompat.GetRunLobbyPlayerIds(lobby)
-            .ToDictionary(static playerId => playerId, static _ => (object?)null);
+        var playerStateById = MultiplayerCompat.GetRunLobbyPlayerIds(lobby)
+            .ToDictionary(
+                static playerId => playerId,
+                static _ => default(QuickSlLobbyPlayerState));
 
         if (lobby == null || RunLobbyPlayersAccessor.Value?.GetValue(lobby) is not IEnumerable players)
         {
-            return versionInfoByPlayerId;
+            return playerStateById;
         }
 
         foreach (object? player in players)
@@ -51,21 +60,21 @@ internal static class QuickSlLobbyCompat
             ulong playerId = GetPlayerId(player);
             if (player is not ulong)
             {
-                // 0.110 的 RunLobbyPlayer.versionInfo 必须传递给新的 LoadRunLobbyPlayer，
-                // 否则重载后会丢失各 peer 的版本、分支与 MOD 列表。
-                versionInfoByPlayerId[playerId] =
-                    MemberAccessor.Get(player.GetType(), "versionInfo").GetValue(player);
+                Type playerType = player.GetType();
+                object? versionInfo = FindReadableMember(playerType, "versionInfo")?.GetValue(player);
+                bool? isModded = FindReadableMember(playerType, "isModded")?.GetValue(player) as bool?;
+                playerStateById[playerId] = new QuickSlLobbyPlayerState(versionInfo, isModded);
             }
         }
 
-        return versionInfoByPlayerId;
+        return playerStateById;
     }
 
     internal static void AddConnectedPlayersToLoadLobby(
         LoadRunLobby loadLobby,
         INetGameService netService,
         IEnumerable<ulong> connectedPlayerIds,
-        IReadOnlyDictionary<ulong, object?> versionInfoByPlayerId)
+        IReadOnlyDictionary<ulong, QuickSlLobbyPlayerState> playerStateById)
     {
         if (netService.Type == NetGameType.Host)
         {
@@ -103,7 +112,7 @@ internal static class QuickSlLobbyCompat
             currentPlayers.Add(CreateLoadRunLobbyPlayer(
                 playerType,
                 playerId,
-                versionInfoByPlayerId.GetValueOrDefault(playerId)));
+                playerStateById.GetValueOrDefault(playerId)));
         }
     }
 
@@ -178,7 +187,7 @@ internal static class QuickSlLobbyCompat
     private static object CreateLoadRunLobbyPlayer(
         Type playerType,
         ulong playerId,
-        object? versionInfo)
+        QuickSlLobbyPlayerState state)
     {
         object player = TypeAccessor.Get(playerType).CreateInstance()
             ?? throw new InvalidOperationException($"无法创建 {playerType.FullName}。");
@@ -186,12 +195,29 @@ internal static class QuickSlLobbyCompat
         MemberAccessor.Get(playerType, "id").SetValue(player, playerId);
         MemberAccessor.Get(playerType, "isReady").SetValue(player, false);
 
-        MemberAccessor versionInfoAccessor = MemberAccessor.Get(playerType, "versionInfo");
-        versionInfo ??= MethodAccessor
-            .Get(versionInfoAccessor.ValueType, "LocalDefault", [])
-            .InvokeStatic<object>();
-        versionInfoAccessor.SetValue(player, versionInfo);
-        return player;
+        MemberAccessor? versionInfoAccessor = FindWritableMember(playerType, "versionInfo");
+        if (versionInfoAccessor != null)
+        {
+            object? versionInfo = state.VersionInfo;
+            versionInfo ??= MethodAccessor
+                .Get(versionInfoAccessor.ValueType, "LocalDefault", [])
+                .InvokeStatic<object>();
+            versionInfoAccessor.SetValue(player, versionInfo);
+            return player;
+        }
+
+        MemberAccessor? isModdedAccessor = FindWritableMember(playerType, "isModded");
+        if (isModdedAccessor != null)
+        {
+            bool isModded = state.IsModded
+                ?? throw new InvalidOperationException(
+                    $"无法恢复玩家 {playerId} 的 MOD 状态，已中止多人快速 SL。");
+            isModdedAccessor.SetValue(player, isModded);
+            return player;
+        }
+
+        throw new InvalidOperationException(
+            $"无法识别 {playerType.FullName} 的版本或 MOD 状态成员。");
     }
 
     private static Type GetCollectionElementType(Type collectionType)
@@ -212,6 +238,27 @@ internal static class QuickSlLobbyCompat
             {
                 MemberAccessor accessor = MemberAccessor.Get(type, memberName);
                 if (accessor.CanRead)
+                {
+                    return accessor;
+                }
+            }
+            catch (MissingMemberException)
+            {
+                // 当前游戏版本使用另一套大厅成员名称，继续尝试下一个候选。
+            }
+        }
+
+        return null;
+    }
+
+    private static MemberAccessor? FindWritableMember(Type type, params string[] memberNames)
+    {
+        foreach (string memberName in memberNames)
+        {
+            try
+            {
+                MemberAccessor accessor = MemberAccessor.Get(type, memberName);
+                if (accessor.CanWrite)
                 {
                     return accessor;
                 }
