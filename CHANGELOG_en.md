@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.8.0] - 2026-8-14
+### Fixed
+- Added compatibility with game version 0.111.0.
+- Fixed issues that occurred when the game installation path contained characters such as quotation marks.
+
 ## [1.7.0] - 2026-7-31
 ### Fixed
 - Added compatibility with game version 0.110.
