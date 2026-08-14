@@ -5,26 +5,22 @@ using System.Runtime.ExceptionServices;
 
 namespace QuickSL.Core;
 
-internal class DisconnectSuppressingNetGameService : DispatchProxy
+internal static class DisconnectSuppressingNetGameService
 {
-    private INetGameService? inner;
-
     internal static INetGameService Create(INetGameService inner)
     {
         ArgumentNullException.ThrowIfNull(inner);
 
-        object proxy = Create(typeof(INetGameService), typeof(DisconnectSuppressingNetGameService));
-        var instance = (DisconnectSuppressingNetGameService)proxy;
-        instance.inner = inner;
-        return (INetGameService)proxy;
+        return (INetGameService)RuntimeInterfaceProxy.Create(
+            typeof(INetGameService),
+            (targetMethod, args) => Invoke(inner, targetMethod, args));
     }
 
-    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+    private static object? Invoke(
+        INetGameService target,
+        MethodInfo targetMethod,
+        object?[]? args)
     {
-        ArgumentNullException.ThrowIfNull(targetMethod);
-        INetGameService target = inner
-            ?? throw new InvalidOperationException("断线抑制网络代理尚未初始化。");
-
         if (targetMethod.Name == nameof(INetGameService.Disconnect))
         {
             object? reason = args is { Length: > 0 } ? args[0] : null;
@@ -36,9 +32,9 @@ internal class DisconnectSuppressingNetGameService : DispatchProxy
 
         try
         {
-            // 运行时代理会按当前游戏实际的 INetGameService 形态转发全部成员。
+            // 自建代理会按当前游戏实际的 INetGameService 形态转发全部成员。
             // 因此 0.107.1 不会静态引用尚不存在的 PeerVersionInfo，0.111 的 LocalVersion
-            // 也会自动转发给原服务。
+            // 也会自动转发给原服务，同时不依赖可能包含安装路径的加载上下文名称。
             return targetMethod.Invoke(target, args);
         }
         catch (TargetInvocationException ex) when (ex.InnerException != null)

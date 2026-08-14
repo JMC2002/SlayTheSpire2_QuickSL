@@ -66,6 +66,11 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
             }
 
             RunState runState = RunState.FromSerializable(runSave);
+            // 代理生成只依赖运行时接口，应在取消队列和拆除旧同步器之前完成。
+            // 即使未来遇到未知接口形态，也能在不破坏当前联机局的情况下中止。
+            INetGameService protectedNetService =
+                DisconnectSuppressingNetGameService.Create(originalNetService);
+            object loadLobbyListener = PassiveLoadRunLobbyListener.CreateListener();
 
             ModLogger.Info($"多人快速 SL：执行同步重载，RequestId={requestId}，在线玩家数={connectedPlayerIds.Count}。");
             QuickSlAsyncOperationGuard.CancelPendingGameWaits();
@@ -79,8 +84,6 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
             QuickSlSceneReloadGuard.PrepareCurrentHandForSceneSwap();
             DisposeNetworkPreservedRunSystems(runManager);
 
-            INetGameService protectedNetService =
-                DisconnectSuppressingNetGameService.Create(originalNetService);
             NetServiceAccessor.SetValue(runManager, protectedNetService);
             try
             {
@@ -92,7 +95,10 @@ internal sealed class QuickSlMultiplayerReloader(QuickSlMultiplayerController co
                 NetServiceAccessor.SetValue(runManager, originalNetService);
             }
 
-            loadLobby = QuickSlLobbyCompat.CreateLoadRunLobby(originalNetService, runSave);
+            loadLobby = QuickSlLobbyCompat.CreateLoadRunLobby(
+                originalNetService,
+                runSave,
+                loadLobbyListener);
             QuickSlLobbyCompat.AddConnectedPlayersToLoadLobby(
                 loadLobby,
                 originalNetService,

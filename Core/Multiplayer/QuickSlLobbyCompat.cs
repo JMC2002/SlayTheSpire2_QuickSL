@@ -29,9 +29,10 @@ internal static class QuickSlLobbyCompat
 
     internal static LoadRunLobby CreateLoadRunLobby(
         INetGameService netService,
-        SerializableRun runSave)
+        SerializableRun runSave,
+        object listener)
     {
-        object listener = PassiveLoadRunLobbyListener.CreateListener();
+        ArgumentNullException.ThrowIfNull(listener);
         return TypeAccessor.Get(typeof(LoadRunLobby))
                    .CreateInstance(netService, listener, runSave) as LoadRunLobby
                ?? throw new InvalidOperationException("无法创建兼容当前游戏版本的 LoadRunLobby。");

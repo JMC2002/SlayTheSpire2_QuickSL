@@ -5,7 +5,7 @@ using System.Reflection;
 
 namespace QuickSL.Core;
 
-internal class PassiveLoadRunLobbyListener : DispatchProxy
+internal static class PassiveLoadRunLobbyListener
 {
     private const string ListenerTypeName =
         "MegaCrit.Sts2.Core.Multiplayer.Game.Lobby.ILoadRunLobbyListener";
@@ -15,12 +15,11 @@ internal class PassiveLoadRunLobbyListener : DispatchProxy
         // 0.107.1–0.109.1 的 PlayerConnected 参数是 ulong；0.110 改为 LoadRunLobbyPlayer。
         // 单个静态类型无法同时实现两种接口形态，因此按当前游戏 DLL 动态生成接口代理。
         Type listenerType = typeof(LoadRunLobby).Assembly.GetType(ListenerTypeName, throwOnError: true)!;
-        return Create(listenerType, typeof(PassiveLoadRunLobbyListener));
+        return RuntimeInterfaceProxy.Create(listenerType, Invoke);
     }
 
-    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+    private static object? Invoke(MethodInfo targetMethod, object?[]? args)
     {
-        ArgumentNullException.ThrowIfNull(targetMethod);
         args ??= [];
 
         switch (targetMethod.Name)
